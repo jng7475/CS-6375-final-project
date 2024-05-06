@@ -1,88 +1,94 @@
 import numpy as np
-from numpy.random import randn
-import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+
 
 class RNN:
-  # A many-to-one Vanilla Recurrent Neural Network.
+    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.001):
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.learning_rate = learning_rate
 
-  def __init__(self, input_size, output_size, hidden_size=64):
-    # Weights
-    self.Whh = randn(hidden_size, hidden_size) / 1000
-    self.Wxh = randn(hidden_size, input_size) / 1000
-    self.Why = randn(output_size, hidden_size) / 1000
+        # Initialize weights
+        self.Wxh = np.random.randn(
+            hidden_size, input_size) * 0.01  # input to hidden
+        self.Whh = np.random.randn(
+            hidden_size, hidden_size) * 0.01  # hidden to hidden
+        self.Why = np.random.randn(
+            output_size, hidden_size) * 0.01  # hidden to output
+        self.bh = np.zeros((hidden_size, 1))  # hidden bias
+        self.by = np.zeros((output_size, 1))  # output bias
 
-    # Biases
-    self.bh = np.zeros((hidden_size, 1))
-    self.by = np.zeros((output_size, 1))
+    def forward(self, inputs):
+        h = np.zeros((self.hidden_size, 1))
+        self.inputs = inputs
+        self.hs = {0: h}
 
-  def forward(self, inputs):
-    '''
-    Perform a forward pass of the RNN using the given inputs.
-    Returns the final output and hidden state.
-    - inputs is an array of one hot vectors with shape (input_size, 1).
-    '''
-    h = np.zeros((self.Whh.shape[0], 1))
+        # Forward pass
+        for t, x in enumerate(inputs):
+            h = np.tanh(np.dot(self.Wxh, x) + np.dot(self.Whh, h) + self.bh)
+            self.hs[t+1] = h
 
-    self.last_inputs = inputs
-    self.last_hs = { 0: h }
+        # Compute output
+        output = np.dot(self.Why, h) + self.by
+        return output
 
-    # Perform each step of the RNN
-    for i, x in enumerate(inputs):
-      h = np.tanh(self.Wxh @ x + self.Whh @ h + self.bh)
-      self.last_hs[i + 1] = h
+    def backward(self, doutput):
+        dWhy = np.dot(doutput, self.hs[len(self.inputs)].T)
+        dby = doutput
+        dhnext = np.dot(self.Why.T, doutput)
 
-    # Compute the output
-    y = self.Why @ h + self.by
+        dWxh, dWhh, dbh = np.zeros_like(self.Wxh), np.zeros_like(
+            self.Whh), np.zeros_like(self.bh)
+        dhraw = (1 - self.hs[len(self.inputs)]**2) * dhnext
+        for t in reversed(range(len(self.inputs))):
+            dWxh += np.dot(dhraw, self.inputs[t].T)
+            dWhh += np.dot(dhraw, self.hs[t].T)
+            dbh += dhraw
+            dhraw = np.dot(self.Whh.T, dhraw) * (1 - self.hs[t]**2)
 
-    return y, h
+        return dWxh, dWhh, dWhy, dbh, dby
 
-  def backprop(self, d_y, learn_rate=2e-2):
-    '''
-    Perform a backward pass of the RNN.
-    - d_y (dL/dy) has shape (output_size, 1).
-    - learn_rate is a float.
-    '''
-    n = len(self.last_inputs)
+    def update_parameters(self, dWxh, dWhh, dWhy, dbh, dby):
+        # Update parameters using gradient descent
+        self.Wxh -= self.learning_rate * dWxh
+        self.Whh -= self.learning_rate * dWhh
+        self.Why -= self.learning_rate * dWhy
+        self.bh -= self.learning_rate * dbh
+        self.by -= self.learning_rate * dby
 
-    # Calculate dL/dWhy and dL/dby.
-    d_Why = d_y @ self.last_hs[n].T
-    d_by = d_y
+    def train(self, X_train, y_train, epochs=50, batch_size=32):
+        for epoch in range(epochs):
+            for i in range(0, len(X_train), batch_size):
+                X_batch = X_train[i:i+batch_size]
+                y_batch = y_train[i:i+batch_size]
 
-    # Initialize dL/dWhh, dL/dWxh, and dL/dbh to zero.
-    d_Whh = np.zeros(self.Whh.shape)
-    d_Wxh = np.zeros(self.Wxh.shape)
-    d_bh = np.zeros(self.bh.shape)
+                dWxh, dWhh, dWhy, dbh, dby = np.zeros_like(self.Wxh), np.zeros_like(
+                    self.Whh), np.zeros_like(self.Why), np.zeros_like(self.bh), np.zeros_like(self.by)
 
-    # Calculate dL/dh for the last h.
-    # dL/dh = dL/dy * dy/dh
-    d_h = self.Why.T @ d_y
+                for j in range(len(X_batch)):
+                    inputs = X_batch[j]
+                    target = y_batch[j]
 
-    # Backpropagate through time.
-    for t in reversed(range(n)):
-      # An intermediate value: dL/dh * (1 - h^2)
-      temp = ((1 - self.last_hs[t + 1] ** 2) * d_h)
+                    output = self.forward(inputs)
+                    loss = 0.5 * np.sum((output - target) ** 2)
+                    doutput = output - target
 
-      # dL/db = dL/dh * (1 - h^2)
-      d_bh += temp
+                    dWxh_temp, dWhh_temp, dWhy_temp, dbh_temp, dby_temp = self.backward(
+                        doutput)
 
-      # dL/dWhh = dL/dh * (1 - h^2) * h_{t-1}
-      d_Whh += temp @ self.last_hs[t].T
+                    dWxh += dWxh_temp
+                    dWhh += dWhh_temp
+                    dWhy += dWhy_temp
+                    dbh += dbh_temp
+                    dby += dby_temp
 
-      # dL/dWxh = dL/dh * (1 - h^2) * x
-      d_Wxh += temp @ self.last_inputs[t].T
+                dWxh /= len(X_batch)
+                dWhh /= len(X_batch)
+                dWhy /= len(X_batch)
+                dbh /= len(X_batch)
+                dby /= len(X_batch)
 
-      # Next dL/dh = dL/dh * (1 - h^2) * Whh
-      d_h = self.Whh @ temp
+                self.update_parameters(dWxh, dWhh, dWhy, dbh, dby)
 
-    # Clip to prevent exploding gradients.
-    for d in [d_Wxh, d_Whh, d_Why, d_bh, d_by]:
-      np.clip(d, -1, 1, out=d)
-
-    # Update weights and biases using gradient descent.
-    self.Whh -= learn_rate * d_Whh
-    self.Wxh -= learn_rate * d_Wxh
-    self.Why -= learn_rate * d_Why
-    self.bh -= learn_rate * d_bh
-    self.by -= learn_rate * d_by
-    
+            if epoch % 10 == 0:
+                print(f'Epoch {epoch}, Loss: {loss}')

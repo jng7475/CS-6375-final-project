@@ -1,17 +1,13 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-
-# from RNN import RNN
 from RNN1 import RNN
-
 # Load the dataset
 data = pd.read_csv('GOOGL_2006-01-01_to_2018-01-01.csv')
 
 # Preprocess the data
 scaler = MinMaxScaler(feature_range=(0, 1))
 data['Close'] = scaler.fit_transform(data['Close'].values.reshape(-1, 1))
-
 
 # Split the data into training and testing sets
 train_size = int(len(data) * 0.8)
@@ -24,7 +20,6 @@ def create_sequences(data, seq_length=30):
     y = []
     close_data = data['Close'].values
     data_len = len(close_data)
-
     for i in range(seq_length, data_len - seq_length):
         X.append(close_data[i - seq_length:i])
         y.append(close_data[i + seq_length])
@@ -42,21 +37,24 @@ X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
 input_size = 1
 output_size = 1
 hidden_size = 64
-# rnn = RNN(input_size, output_size, hidden_size)
-rnn = RNN(input_size, output_size, hidden_size)
+rnn = RNN(input_size, hidden_size, output_size)
 
 # Train the RNN
 epochs = 100
+learning_rate = 0.001
 for epoch in range(epochs):
     for i in range(X_train.shape[0]):
-        y_pred, _ = rnn.forward(X_train[i])
-        rnn.backprop(y_train[i] - y_pred)
+        inputs = X_train[i]
+        targets = y_train[i]
+        outputs, _ = rnn.forward(inputs)
+        rnn.backward(inputs, targets, learning_rate)
 
 # Prediction
 predictions = []
 for i in range(X_test.shape[0]):
-    y_pred, _ = rnn.forward(X_test[i])
-    predictions.append(y_pred[0, 0])
+    inputs = X_test[i]
+    outputs, _ = rnn.forward(inputs)
+    predictions.append(outputs[-1][0])
 
 # Inverse transform the predictions
 predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
