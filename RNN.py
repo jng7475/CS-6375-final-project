@@ -2,93 +2,88 @@ import numpy as np
 
 
 class RNN:
-    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.001):
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.learning_rate = learning_rate
+    def __init__(self, input_size, hidden_size, output_size):
+        self.input_size = input_size  # size of input layer
+        self.hidden_size = hidden_size  # size of hidden layer
+        self.output_size = output_size  # size of output layer
 
-        # Initialize weights
-        self.Wxh = np.random.randn(
-            hidden_size, input_size) * 0.01  # input to hidden
-        self.Whh = np.random.randn(
-            hidden_size, hidden_size) * 0.01  # hidden to hidden
-        self.Why = np.random.randn(
-            output_size, hidden_size) * 0.01  # hidden to output
-        self.bh = np.zeros((hidden_size, 1))  # hidden bias
-        self.by = np.zeros((output_size, 1))  # output bias
+        # Initialize weights and biases for different layers
+        self.w_input_hidden = np.random.randn(hidden_size, input_size) / 100
+        self.w_hidden_hidden = np.random.randn(hidden_size, hidden_size) / 100
+        self.w_hidden_output = np.random.randn(output_size, hidden_size) / 100
+
+        self.bias_hidden = np.zeros((hidden_size, 1))
+        self.bias_output = np.zeros((output_size, 1))
 
     def forward(self, inputs):
-        h = np.zeros((self.hidden_size, 1))
+        # values at hidden layer after put input through activation function
+        hidden_layer_values = np.zeros((self.hidden_size, 1))
+        # save inputs for backpropagation
         self.inputs = inputs
-        self.hs = {0: h}
-
+        # map to save hidden states
+        self.hidden_states = {0: hidden_layer_values}
         # Forward pass
-        for t, x in enumerate(inputs):
-            h = np.tanh(np.dot(self.Wxh, x) + np.dot(self.Whh, h) + self.bh)
-            self.hs[t+1] = h
+        for t, input_t in enumerate(inputs):  # Loop through timesteps
+            # put input through tanh activation function
+            hidden_layer_values = np.tanh(np.dot(self.w_input_hidden, input_t).reshape(
+                -1, 1) + np.dot(self.w_hidden_hidden, hidden_layer_values) + self.bias_hidden)
+            # save current hidden state
+            self.hidden_states[t + 1] = hidden_layer_values
+        # Calculate output: output = weight dot values at hidden layer + bias
+        output = np.dot(self.w_hidden_output,
+                        hidden_layer_values) + self.bias_output
 
-        # Compute output
-        output = np.dot(self.Why, h) + self.by
-        return output
+        return output, hidden_layer_values
 
-    def backward(self, doutput):
-        dWhy = np.dot(doutput, self.hs[len(self.inputs)].T)
-        dby = doutput
-        dhnext = np.dot(self.Why.T, doutput)
+    def backward(self, doutput, learn_rate):
+        # initialize gradients to zeros
+        gradient_input_hidden, gradient_hidden_hidden, gradient_hidden_output = np.zeros_like(
+            self.w_input_hidden), np.zeros_like(self.w_hidden_hidden), np.zeros_like(self.w_hidden_output)
+        gradient_bias_hidden, gradient_bias_output = np.zeros_like(
+            self.bias_hidden), np.zeros_like(self.bias_output)
+        gradient_hidden_next = np.zeros_like(self.hidden_states[0])
 
-        dWxh, dWhh, dbh = np.zeros_like(self.Wxh), np.zeros_like(
-            self.Whh), np.zeros_like(self.bh)
-        dhraw = (1 - self.hs[len(self.inputs)]**2) * dhnext
         for t in reversed(range(len(self.inputs))):
-            dWxh += np.dot(dhraw, self.inputs[t].T)
-            dWhh += np.dot(dhraw, self.hs[t].T)
-            dbh += dhraw
-            dhraw = np.dot(self.Whh.T, dhraw) * (1 - self.hs[t]**2)
+            dy = doutput
 
-        return dWxh, dWhh, dWhy, dbh, dby
+            # gradient at output layer
+            gradient_hidden_output += np.dot(dy, self.hidden_states[t+1].T)
 
-    def update_parameters(self, dWxh, dWhh, dWhy, dbh, dby):
-        # Update parameters using gradient descent
-        self.Wxh -= self.learning_rate * dWxh
-        self.Whh -= self.learning_rate * dWhh
-        self.Why -= self.learning_rate * dWhy
-        self.bh -= self.learning_rate * dbh
-        self.by -= self.learning_rate * dby
+            # gradient at hidden layer
+            gradient_hidden = np.dot(
+                self.w_hidden_output.T, dy) + gradient_hidden_next
 
-    def train(self, X_train, y_train, epochs=50, batch_size=32):
-        for epoch in range(epochs):
-            for i in range(0, len(X_train), batch_size):
-                X_batch = X_train[i:i+batch_size]
-                y_batch = y_train[i:i+batch_size]
+            # Error signal with activation derivative
+            # Include derivative of tanh activation
+            error_signal = (1 - self.hidden_states[t+1] ** 2) * gradient_hidden
 
-                dWxh, dWhh, dWhy, dbh, dby = np.zeros_like(self.Wxh), np.zeros_like(
-                    self.Whh), np.zeros_like(self.Why), np.zeros_like(self.bh), np.zeros_like(self.by)
+            gradient_bias_hidden += error_signal
+            # gradient at input layer
+            gradient_input_hidden += np.dot(error_signal,
+                                            self.inputs[t].T.reshape(1, 1))
+            # gradient at hidden layer
+            gradient_hidden_hidden += np.dot(error_signal,
+                                             self.hidden_states[t].T)
+            gradient_hidden_next = np.dot(self.w_hidden_hidden.T, error_signal)
 
-                for j in range(len(X_batch)):
-                    inputs = X_batch[j]
-                    target = y_batch[j]
+        # Gradient Clipping (prevents exploding gradients)
+        for gradient in [gradient_input_hidden, gradient_hidden_hidden, gradient_hidden_output, gradient_bias_hidden, gradient_bias_output]:
+            np.clip(gradient, -5, 5, out=gradient)
 
-                    output = self.forward(inputs)
-                    loss = 0.5 * np.sum((output - target) ** 2)
-                    doutput = output - target
+        # Update weights
+        self.w_input_hidden -= learn_rate * gradient_input_hidden
+        self.w_hidden_hidden -= learn_rate * gradient_hidden_hidden
+        self.w_hidden_output -= learn_rate * gradient_hidden_output
+        self.bias_hidden -= learn_rate * gradient_bias_hidden
+        self.bias_output -= learn_rate * gradient_bias_output
 
-                    dWxh_temp, dWhh_temp, dWhy_temp, dbh_temp, dby_temp = self.backward(
-                        doutput)
-
-                    dWxh += dWxh_temp
-                    dWhh += dWhh_temp
-                    dWhy += dWhy_temp
-                    dbh += dbh_temp
-                    dby += dby_temp
-
-                dWxh /= len(X_batch)
-                dWhh /= len(X_batch)
-                dWhy /= len(X_batch)
-                dbh /= len(X_batch)
-                dby /= len(X_batch)
-
-                self.update_parameters(dWxh, dWhh, dWhy, dbh, dby)
-
-            if epoch % 10 == 0:
-                print(f'Epoch {epoch}, Loss: {loss}')
+    def train(self, inputs, targets, num_epochs, learn_rate):
+        for epoch in range(num_epochs):
+            loss = 0
+            for i in range(len(inputs)):
+                input_sequence, target = inputs[i], targets[i]
+                output, _ = self.forward(input_sequence)
+                loss += 0.5 * np.sum((output - target) ** 2)
+                difference = output - target
+                self.backward(difference, learn_rate)
+            print(f'Epoch {epoch+1}, Loss: {loss/len(inputs)}')
