@@ -5,7 +5,6 @@
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 
 from RNN import RNN
@@ -15,18 +14,24 @@ url = 'https://drive.google.com/file/d/1wjbHIo3dpP0DLXoThir9qtKj1P2NOKaG/view?us
 url = 'https://drive.google.com/uc?id=' + url.split('/')[-2]
 dataset = pd.read_csv(url, index_col='Date', parse_dates=['Date'])
 
-# Split data into training and test sets, using data from 2016 and earlier as training data, and data from 2017 and later as test data
-traning_dataset = dataset[:'2016'].iloc[:, 1:2].values
-test_dataset = dataset['2017':].iloc[:, 1:2].values
+# Assuming dataset is your pandas DataFrame
+training_ratio = 0.8
+
+# Calculate the index to split the data
+split_index = int(len(dataset) * training_ratio)
+
+# Splitting the data into training and test sets
+training_dataset = dataset.iloc[:split_index, 1:2].values
+test_dataset = dataset.iloc[split_index:, 1:2].values
 
 # Scaling the training set
 sc = MinMaxScaler(feature_range=(0, 1))
-training_set_scaled = sc.fit_transform(traning_dataset)
+training_set_scaled = sc.fit_transform(training_dataset)
 
 X_train = []
 Y_train = []
 # Creating a data structure with 60 time-steps and 1 output
-for i in range(60, traning_dataset.shape[0]):
+for i in range(60, training_dataset.shape[0]):
     X_train.append(training_set_scaled[i-60:i, 0])
     Y_train.append(training_set_scaled[i, 0])
 X_train, Y_train = np.array(X_train), np.array(Y_train)
@@ -35,16 +40,11 @@ X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
 
 # Train the RNN
 rnn = RNN(input_size=1, hidden_size=64, output_size=1)
-rnn.train(inputs=X_train, targets=Y_train, num_epochs=50, learn_rate=0.005)
+rnn.train(inputs=X_train, targets=Y_train, num_epochs=64, learn_rate=0.005)
 
+# Preparing the test data
+test_dataset_close = test_dataset.reshape(-1, 1)
 
-# Process test data
-# Use close data of previous 60 days to predict the stock price at time t
-original_dataset = pd.concat(
-    (dataset["Close"][:'2016'], dataset["Close"]['2017':]), axis=0)
-test_dataset_close = original_dataset[len(
-    original_dataset)-len(test_dataset) - 60:].values
-test_dataset_close = test_dataset_close.reshape(-1, 1)
 test_dataset_close = sc.transform(test_dataset_close)
 
 X_test = []
@@ -68,8 +68,16 @@ Y_test = sc.inverse_transform(np.array(Y_test).reshape(-1, 1))
 predictions = sc.inverse_transform(np.array(predictions).reshape(-1, 1))
 
 # Calculate the Mean Squared Error and Accuracy
-mse = mean_squared_error(Y_test, predictions)
-print("MSE:", mse)
+def root_mean_squared_error(Y_test, Y_pred):
+    mse = 0
+    for true_value, predicted_value in zip(Y_test, Y_pred):
+        mse += (true_value - predicted_value) ** 2
+    mse = mse / len(Y_test)
+    return np.sqrt(mse)
+
+
+rmse = root_mean_squared_error(Y_test, predictions)
+print("RMSE:", rmse)
 
 
 def accuracy(Y_test, Y_pred, threshold=0.05):  # 5% threshold
